@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "冻存盒管理系统",
-  description: "冻存样本位置、库存和操作记录管理",
+  description: "冻存样本位置、库存和入出库记录管理",
   manifest: "/manifest.webmanifest",
   appleWebApp: { capable: true, statusBarStyle: "default", title: "冻存管理" },
 };
