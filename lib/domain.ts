@@ -8,7 +8,7 @@ export const sampleSchema = z.object({
   source: z.string().trim().default(""),
   collectedAt: z.string().refine((v) => !v || !Number.isNaN(Date.parse(v)), "采集日期无效"),
   frozenAt: z.string().min(1, "时间不能为空").refine((v) => !Number.isNaN(Date.parse(v)), "时间无效"),
-  dishSize: z.string().trim().min(1, "复苏皿规格不能为空"),
+  dishSize: z.string().trim().default(""),
   quantity: z.coerce.number().nonnegative("数量不能小于 0"),
   unit: z.string().trim().min(1, "单位不能为空"),
   project: z.string().trim().default(""),

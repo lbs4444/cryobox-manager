@@ -2,10 +2,12 @@ node_modules
 .next
 out
 .vercel
+supabase/.temp
 .env*
 !.env.example
 coverage
 *.log
 *.pid
+*.port
 *.tsbuildinfo
 .DS_Store

@@ -62,6 +62,12 @@ export interface CustomFieldDefinition {
   required: boolean;
 }
 
+export interface SampleTypeDefinition {
+  id: string;
+  name: string;
+  color: string;
+}
+
 export type AuditAction =
   | "create"
   | "update"
@@ -88,5 +94,6 @@ export interface InventoryState {
   samples: Sample[];
   locations: SampleLocation[];
   customFields: CustomFieldDefinition[];
+  sampleTypes: SampleTypeDefinition[];
   auditEvents: AuditEvent[];
 }

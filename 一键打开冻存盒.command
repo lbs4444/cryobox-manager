@@ -5,9 +5,9 @@ set -u
 PROJECT_DIR="${0:A:h}"
 NODE_DIR="/Users/liubosen/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin"
 NODE="$NODE_DIR/node"
-URL="http://localhost:3000"
 LOG_FILE="$PROJECT_DIR/.cryobox-server.log"
 PID_FILE="$PROJECT_DIR/.cryobox-server.pid"
+PORT_FILE="$PROJECT_DIR/.cryobox-server.port"
 
 cd "$PROJECT_DIR" || exit 1
 
@@ -18,12 +18,38 @@ if [[ ! -x "$NODE" ]]; then
   exit 1
 fi
 
+PORT=""
+if [[ -f "$PORT_FILE" ]]; then
+  SAVED_PORT="$(<"$PORT_FILE")"
+  if [[ "$SAVED_PORT" == <-> ]] && /usr/bin/curl -fsS "http://localhost:$SAVED_PORT" >/dev/null 2>&1; then
+    PORT="$SAVED_PORT"
+  fi
+fi
+
+if [[ -z "$PORT" ]]; then
+  for CANDIDATE in {3000..3010}; do
+    if ! /usr/sbin/lsof -nP -iTCP:"$CANDIDATE" -sTCP:LISTEN >/dev/null 2>&1; then
+      PORT="$CANDIDATE"
+      break
+    fi
+  done
+fi
+
+if [[ -z "$PORT" ]]; then
+  echo "启动失败：3000–3010 端口均被占用。"
+  read "?按回车键关闭…"
+  exit 1
+fi
+
+URL="http://localhost:$PORT"
+
 if ! /usr/bin/curl -fsS "$URL" >/dev/null 2>&1; then
   echo "正在启动冻存盒管理系统…"
-  PATH="$NODE_DIR:/usr/bin:/bin" /usr/bin/nohup "$NODE" node_modules/next/dist/bin/next dev \
+  PATH="$NODE_DIR:/usr/bin:/bin" /usr/bin/nohup "$NODE" node_modules/next/dist/bin/next dev -p "$PORT" \
     >"$LOG_FILE" 2>&1 &
   SERVER_PID=$!
   echo "$SERVER_PID" >"$PID_FILE"
+  echo "$PORT" >"$PORT_FILE"
   disown "$SERVER_PID" 2>/dev/null || true
 
   READY=0
