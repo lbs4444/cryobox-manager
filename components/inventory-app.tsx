@@ -409,6 +409,8 @@ function BoxView({ state, box, openSlot, setEmptySlotSelected, query, setQuery, 
   const fileRef = useRef<HTMLInputElement>(null);
   const gridScrollerRef = useRef<HTMLDivElement>(null);
   const dragSelection = useRef<{ active: boolean; selecting: boolean; visited: Set<string> }>({ active: false, selecting: true, visited: new Set() });
+  const touchSelection = useRef<{ row: number; column: number; x: number; y: number; moved: boolean } | null>(null);
+  const suppressClickUntil = useRef(0);
   const [slotSize, setSlotSize] = useState(44);
 
   useEffect(() => {
@@ -433,6 +435,28 @@ function BoxView({ state, box, openSlot, setEmptySlotSelected, query, setQuery, 
     if (!drag.active || drag.visited.has(position)) return;
     drag.visited.add(position);
     setEmptySlotSelected(row, column, drag.selecting);
+  }
+
+  function startTouchSelection(event: React.TouchEvent, row: number, column: number) {
+    const touch = event.touches[0];
+    if (!touch) return;
+    touchSelection.current = { row, column, x: touch.clientX, y: touch.clientY, moved: false };
+  }
+
+  function moveTouchSelection(event: React.TouchEvent) {
+    const gesture = touchSelection.current;
+    const touch = event.touches[0];
+    if (!gesture || !touch) return;
+    if (Math.hypot(touch.clientX - gesture.x, touch.clientY - gesture.y) > 10) gesture.moved = true;
+  }
+
+  function endTouchSelection(event: React.TouchEvent, row: number, column: number) {
+    const gesture = touchSelection.current;
+    touchSelection.current = null;
+    if (!gesture || gesture.moved || gesture.row !== row || gesture.column !== column) return;
+    event.preventDefault();
+    suppressClickUntil.current = Date.now() + 600;
+    openSlot(row, column);
   }
 
   useEffect(() => {
@@ -469,7 +493,7 @@ function BoxView({ state, box, openSlot, setEmptySlotSelected, query, setQuery, 
   return <div className="box-workspace">
     <section className="panel box-panel">
       <div className="legend"><span><i className="empty" />空孔</span><span><i className="selected" />已选择</span><span><i className="stored" />已存样品</span><span className="hint"><CircleHelp size={14} /> 点击或拖动空孔可连续多选</span></div>
-      <div ref={gridScrollerRef} className="grid-scroller" style={{ "--slot-size": `${slotSize}px` } as CSSProperties}><div className="box-grid" style={{ gridTemplateColumns: `34px repeat(${box.columns}, var(--slot-size))`, width: "max-content" }}><div className="corner" />{Array.from({ length: box.columns }, (_, c) => <div className="column-label" key={`head-${c}`}>{c + 1}</div>)}{Array.from({ length: box.rows }, (_, row) => <RowSlots key={row} row={row} box={box} state={state} query={query} openSlot={openSlot} selectedPositions={selectedPositions} beginDragSelection={beginDragSelection} extendDragSelection={extendDragSelection} />)}</div></div>
+      <div ref={gridScrollerRef} className="grid-scroller" style={{ "--slot-size": `${slotSize}px` } as CSSProperties}><div className="box-grid" style={{ gridTemplateColumns: `34px repeat(${box.columns}, var(--slot-size))`, width: "max-content" }}><div className="corner" />{Array.from({ length: box.columns }, (_, c) => <div className="column-label" key={`head-${c}`}>{c + 1}</div>)}{Array.from({ length: box.rows }, (_, row) => <RowSlots key={row} row={row} box={box} state={state} query={query} openSlot={openSlot} selectedPositions={selectedPositions} beginDragSelection={beginDragSelection} extendDragSelection={extendDragSelection} startTouchSelection={startTouchSelection} moveTouchSelection={moveTouchSelection} endTouchSelection={endTouchSelection} suppressClickUntil={suppressClickUntil} />)}</div></div>
     </section>
     <aside className="panel box-info-rail">
       <div className="metric-stack"><div className="metric"><span>已占用</span><strong>{occupied}</strong><small>个孔位</small></div><div className="metric"><span>空余</span><strong>{box.rows * box.columns - occupied}</strong><small>个孔位</small></div><div className="metric"><span>使用率</span><strong>{Math.round((occupied / (box.rows * box.columns)) * 100)}%</strong><small>{box.rows * box.columns} 个总孔位</small></div></div>
@@ -478,14 +502,14 @@ function BoxView({ state, box, openSlot, setEmptySlotSelected, query, setQuery, 
   </div>;
 }
 
-function RowSlots({ row, box, state, query, openSlot, selectedPositions, beginDragSelection, extendDragSelection }: { row: number; box: Box; state: InventoryState; query: string; openSlot: (r: number, c: number) => void; selectedPositions: string[]; beginDragSelection: (r: number, c: number, selected: boolean) => void; extendDragSelection: (r: number, c: number) => void }) {
+function RowSlots({ row, box, state, query, openSlot, selectedPositions, beginDragSelection, extendDragSelection, startTouchSelection, moveTouchSelection, endTouchSelection, suppressClickUntil }: { row: number; box: Box; state: InventoryState; query: string; openSlot: (r: number, c: number) => void; selectedPositions: string[]; beginDragSelection: (r: number, c: number, selected: boolean) => void; extendDragSelection: (r: number, c: number) => void; startTouchSelection: (event: React.TouchEvent, row: number, column: number) => void; moveTouchSelection: (event: React.TouchEvent) => void; endTouchSelection: (event: React.TouchEvent, row: number, column: number) => void; suppressClickUntil: React.MutableRefObject<number> }) {
   return <><div className="row-label">{rowLabel(row)}</div>{Array.from({ length: box.columns }, (_, column) => {
     const location = state.locations.find((item) => item.boxId === box.id && item.row === row && item.column === column && item.active);
     const sample = state.samples.find((item) => item.id === location?.sampleId);
     const dimmed = Boolean(query && sample && !`${sample.code} ${sample.name}`.toLowerCase().includes(query.toLowerCase()));
     const position = coordinate(row, column);
     const selected = selectedPositions.includes(position);
-    return <button key={`${row}-${column}`} className={`slot ${sample ? "occupied" : ""} ${selected ? "selected" : ""} ${dimmed ? "dimmed" : ""}`} style={sample ? { "--sample-color": typeColor(state, sample.type) } as CSSProperties : undefined} onPointerDown={(event) => { if (event.pointerType === "mouse" && event.button === 0 && !sample) { event.preventDefault(); beginDragSelection(row, column, selected); } }} onPointerEnter={() => { if (!sample) extendDragSelection(row, column); }} onClick={(event) => { if (!sample && (event.nativeEvent as PointerEvent).pointerType === "mouse") return; openSlot(row, column); }} aria-pressed={selected} aria-label={`${position} ${sample ? `${sample.name}，${sample.type}` : selected ? "已选择" : "空孔"}`}>{sample && <><strong>{sample.name}</strong><small>{formatSlotDate(sample.frozenAt)}</small></>}</button>;
+    return <button key={`${row}-${column}`} className={`slot ${sample ? "occupied" : ""} ${selected ? "selected" : ""} ${dimmed ? "dimmed" : ""}`} style={sample ? { "--sample-color": typeColor(state, sample.type) } as CSSProperties : undefined} onPointerDown={(event) => { if (event.pointerType === "mouse" && event.button === 0 && !sample) { event.preventDefault(); beginDragSelection(row, column, selected); } }} onPointerEnter={() => { if (!sample) extendDragSelection(row, column); }} onTouchStart={(event) => startTouchSelection(event, row, column)} onTouchMove={moveTouchSelection} onTouchEnd={(event) => endTouchSelection(event, row, column)} onTouchCancel={() => { suppressClickUntil.current = Date.now() + 300; }} onClick={(event) => { if (Date.now() < suppressClickUntil.current) return; if (!sample && (event.nativeEvent as PointerEvent).pointerType === "mouse") return; openSlot(row, column); }} aria-pressed={selected} aria-label={`${position} ${sample ? `${sample.name}，${sample.type}` : selected ? "已选择" : "空孔"}`}>{sample && <><strong>{sample.name}</strong><small>{formatSlotDate(sample.frozenAt)}</small></>}</button>;
   })}</>;
 }
 
