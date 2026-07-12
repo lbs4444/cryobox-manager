@@ -1,0 +1,13 @@
+.git
+.github
+.next
+node_modules
+outputs
+.env
+.env.*
+!.env.example
+*.log
+*.pid
+*.port
+.DS_Store
+README-local.md

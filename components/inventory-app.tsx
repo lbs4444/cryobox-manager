@@ -11,6 +11,7 @@ import {
 import { demoState } from "@/lib/demo-data";
 import { coordinate, parseCoordinate, rowLabel, sampleSchema, uid, validatePlacement, validateUniqueCode } from "@/lib/domain";
 import { loadCloudState, saveCloudState } from "@/lib/cloud";
+import { loadSelfHostedState, saveSelfHostedState } from "@/lib/self-hosted";
 import type { AuditEvent, Box, InventoryState, Sample, SampleTypeDefinition } from "@/lib/types";
 
 type View = "box" | "search" | "history" | "settings";
@@ -59,7 +60,7 @@ function toggleSetItem(current: Set<string>, id: string) {
   return next;
 }
 
-export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: { mode: "demo" | "cloud"; userEmail?: string; onSignOut?: () => void | Promise<void>; onChangePassword?: (password: string) => Promise<string | null> }) {
+export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: { mode: "demo" | "cloud" | "self-hosted"; userEmail?: string; onSignOut?: () => void | Promise<void>; onChangePassword?: (password: string) => Promise<string | null> }) {
   const [state, setState] = useState<InventoryState | null>(null);
   const [selectedBoxId, setSelectedBoxId] = useState("");
   const [view, setView] = useState<View>("box");
@@ -75,13 +76,16 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
   const [draggedStorage, setDraggedStorage] = useState<{ kind: "freezer" | "rack" | "box"; id: string } | null>(null);
   const [importRows, setImportRows] = useState<Record<string, string>[] | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [serverVersion, setServerVersion] = useState<number | null>(null);
   const loaded = useRef(false);
 
   useEffect(() => {
     async function initialize() {
       try {
         const stored = mode === "demo" ? localStorage.getItem("cryobox-demo-v1") : null;
-        const next = mode === "cloud" ? await loadCloudState() : stored ? JSON.parse(stored) : structuredClone(demoState);
+        const hosted = mode === "self-hosted" ? await loadSelfHostedState() : null;
+        const next = mode === "cloud" ? await loadCloudState() : hosted?.state ?? (stored ? JSON.parse(stored) : structuredClone(demoState));
+        if (hosted) setServerVersion(hosted.version);
         const resolved = normalizeState(next && Array.isArray(next.boxes) ? next : structuredClone(demoState));
         setState(resolved);
         setSelectedBoxId(resolved.boxes.find((box: Box) => !box.deletedAt)?.id ?? "");
@@ -100,7 +104,11 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
       try {
         setSyncing(true);
         if (mode === "demo") localStorage.setItem("cryobox-demo-v1", JSON.stringify(state));
-        else await saveCloudState(state);
+        else if (mode === "cloud") await saveCloudState(state);
+        else if (serverVersion != null) {
+          const saved = await saveSelfHostedState(state, serverVersion);
+          setServerVersion(saved.version);
+        }
       } catch (cause) {
         setError(`保存失败，请勿继续录入：${cause instanceof Error ? cause.message : "未知错误"}`);
       } finally { setSyncing(false); }
@@ -284,6 +292,22 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
   function exportJson() {
     download(`冻存库存_${dateStamp()}.json`, JSON.stringify(state, null, 2), "application/json");
   }
+  function importJson(file: File) {
+    file.text().then((content) => {
+      try {
+        const parsed = JSON.parse(content) as InventoryState;
+        if (!Array.isArray(parsed.boxes) || !Array.isArray(parsed.samples) || !Array.isArray(parsed.locations)) throw new Error("数据格式不完整");
+        const imported = normalizeState(parsed);
+        if (!window.confirm(`将导入 ${imported.samples.length} 个样品并替换当前库存。是否继续？`)) return;
+        setState(imported);
+        setSelectedBoxId(imported.boxes.find((box) => !box.deletedAt)?.id ?? "");
+        setSelectedPositions([]);
+        setNotice("JSON 已导入，正在保存");
+      } catch (cause) {
+        setError(`JSON 导入失败：${cause instanceof Error ? cause.message : "格式无效"}`);
+      }
+    }).catch(() => setError("无法读取 JSON 文件"));
+  }
   function exportCsv() {
     const rows = state!.samples.map((sample) => {
       const location = state!.locations.find((item) => item.sampleId === sample.id && item.active);
@@ -381,21 +405,21 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
             </div>;
           })}
         </div>
-        <div className="account-note">{mode === "cloud" ? <><strong>{userEmail}</strong><span>云端数据已按账号隔离</span><button type="button" onClick={onSignOut}>退出登录</button></> : "数据仅保留在本浏览器"}</div>
+        <div className="account-note">{mode !== "demo" ? <><strong>{userEmail}</strong><span>云端数据已按账号隔离</span><button type="button" onClick={onSignOut}>退出登录</button></> : "数据仅保留在本浏览器"}</div>
       </aside>
       <div className="main-column">
         <header className="topbar">
           <button className="icon-button mobile-only" onClick={() => setSidebar(true)} aria-label="打开菜单"><Menu /></button>
           <div><h1>{viewTitle(view)}</h1><p>{view === "box" && selectedBox ? `${selectedBox.rows} × ${selectedBox.columns} · ${selectedBox.temperature ?? "温度未设置"}` : "样本库存与位置管理"}</p></div>
           <div className="top-selection-slot">{selectedPositions.length > 0 && <div className="top-selection-bar"><div><strong>已选择 {selectedPositions.length} 个孔位</strong><span>{selectedPositions.join("、")}</span></div><div><button className="button secondary" onClick={() => setSelectedPositions([])}>取消</button><button className="button primary" onClick={openBatchRegistration}>批量登记</button></div></div>}</div>
-          <div className="top-actions"><span className="sync-status">{syncing ? "正在保存…" : mode === "cloud" ? <><Cloud size={14} /> 已同步</> : <><Database size={14} /> 本地保存</>}</span><button className="button secondary" onClick={undoLast}><ArchiveRestore size={16} /> 撤销</button>{selectedBox && <button className="button primary" onClick={selectedPositions.length ? openBatchRegistration : () => setNotice("请点击空孔位进行选择，可同时选择多个")}><Plus size={17} /> {selectedPositions.length ? `登记所选（${selectedPositions.length}）` : "选择孔位登记"}</button>}</div>
+          <div className="top-actions"><span className="sync-status">{syncing ? "正在保存…" : mode !== "demo" ? <><Cloud size={14} /> 已同步</> : <><Database size={14} /> 本地保存</>}</span><button className="button secondary" onClick={undoLast}><ArchiveRestore size={16} /> 撤销</button>{selectedBox && <button className="button primary" onClick={selectedPositions.length ? openBatchRegistration : () => setNotice("请点击空孔位进行选择，可同时选择多个")}><Plus size={17} /> {selectedPositions.length ? `登记所选（${selectedPositions.length}）` : "选择孔位登记"}</button>}</div>
         </header>
         {(error || notice) && <div className={`banner ${error ? "error" : "success"}`}><span>{error || notice}</span><button onClick={() => { setError(""); setNotice(""); }}><X /></button></div>}
         <main className="content">
           {view === "box" && <BoxView state={state} box={selectedBox} openSlot={openSlot} setEmptySlotSelected={setEmptySlotSelected} query={query} setQuery={setQuery} onImport={handleImport} exportCsv={exportCsv} selectedPositions={selectedPositions} />}
           {view === "search" && <SearchView state={state} query={query} setQuery={setQuery} results={searchResults} onOpen={(sample) => setDraft(toDraft(state, sample))} />}
           {view === "history" && <SampleHistoryView state={state} />}
-          {view === "settings" && <SettingsView state={state} setState={setState} selectedBoxId={selectedBoxId} setSelectedBoxId={setSelectedBoxId} exportJson={exportJson} exportCsv={exportCsv} importLegacyBrowserData={mode === "cloud" ? importLegacyBrowserData : undefined} changeLoginPassword={onChangePassword ? changeLoginPassword : undefined} />}
+          {view === "settings" && <SettingsView state={state} setState={setState} selectedBoxId={selectedBoxId} setSelectedBoxId={setSelectedBoxId} exportJson={exportJson} exportCsv={exportCsv} importJson={importJson} importLegacyBrowserData={mode === "cloud" ? importLegacyBrowserData : undefined} changeLoginPassword={onChangePassword ? changeLoginPassword : undefined} />}
         </main>
       </div>
       {draft && <SampleModal draft={draft} setDraft={setDraft} state={state} selectedCount={draft.id ? 1 : Math.max(selectedPositions.length, 1)} onSubmit={saveSample} onClose={() => { setDraft(null); setError(""); }} onCheckout={checkoutSample} />}
@@ -535,7 +559,8 @@ function SampleHistoryView({ state }: { state: InventoryState }) {
   return <section className="panel"><div className="panel-heading"><div><h2>样品更新记录</h2><p>仅记录样品入库和出库。</p></div></div>{events.length ? <div className="timeline">{events.map((event) => { const sample = state.samples.find((item) => item.id === event.entityId); const metadata = event.metadata ?? {}; const path = historyLocationText(state, metadata); const outbound = event.action === "checkout"; return <div className="timeline-item" key={event.id}><span className={`timeline-icon ${event.action}`}><FileClock /></span><div><strong>{metadata.sampleName as string || sample?.name || event.summary}</strong><p>{outbound ? "出库" : "入库"} · {metadata.sampleType as string || sample?.type || "类型未记录"} · {path}</p><p>{new Date(event.createdAt).toLocaleString("zh-CN")}{outbound && metadata.reason ? ` · 原因：${metadata.reason}` : ""}</p></div></div>; })}</div> : <EmptyState title="暂无样品更新记录" text="登记入库或办理出库后会显示在这里。" />}</section>;
 }
 
-function SettingsView({ state, setState, selectedBoxId, setSelectedBoxId, exportJson, exportCsv, importLegacyBrowserData, changeLoginPassword }: { state: InventoryState; setState: (s: InventoryState) => void; selectedBoxId: string; setSelectedBoxId: (id: string) => void; exportJson: () => void; exportCsv: () => void; importLegacyBrowserData?: () => void; changeLoginPassword?: () => void }) {
+function SettingsView({ state, setState, selectedBoxId, setSelectedBoxId, exportJson, exportCsv, importJson, importLegacyBrowserData, changeLoginPassword }: { state: InventoryState; setState: (s: InventoryState) => void; selectedBoxId: string; setSelectedBoxId: (id: string) => void; exportJson: () => void; exportCsv: () => void; importJson: (file: File) => void; importLegacyBrowserData?: () => void; changeLoginPassword?: () => void }) {
+  const jsonInput = useRef<HTMLInputElement>(null);
   function addFreezer() { const name = prompt("冰箱名称：", nextNumberedName(state.freezers, "-80°C冰箱 "))?.trim(); if (!name) return; const next = structuredClone(state); next.freezers.push({ id: uid("freezer"), name, location: "" }); setState(next); }
   function addRack() { if (!state.freezers.length) return alert("请先创建冰箱"); const siblings = state.racks.filter((item) => item.freezerId === state.freezers[0].id); const name = prompt("层架名称：", nextNumberedName(siblings, "层架"))?.trim(); if (!name) return; const next = structuredClone(state); next.racks.push({ id: uid("rack"), freezerId: state.freezers[0].id, name }); setState(next); }
   function addBox() { if (!state.racks.length) return alert("请先创建层架"); const siblings = state.boxes.filter((item) => item.rackId === state.racks[0].id); const name = prompt("冻存盒名称：", nextNumberedName(siblings, "冻存盒"))?.trim(); if (!name) return; const spec = prompt("规格：输入 9x9、10x10 或自定义行x列", "9x9")?.toLowerCase().match(/^(\d{1,2})\s*x\s*(\d{1,2})$/); if (!spec) return alert("规格格式无效"); const rows = Number(spec[1]), columns = Number(spec[2]); if (rows < 1 || columns < 1 || rows > 26 || columns > 30) return alert("当前支持 1–26 行、1–30 列"); const next = structuredClone(state); const id = uid("box"); next.boxes.push({ id, rackId: state.racks[0].id, name, rows, columns, temperature: "-80°C" }); setState(next); setSelectedBoxId(id); }
@@ -544,7 +569,7 @@ function SettingsView({ state, setState, selectedBoxId, setSelectedBoxId, export
   function renameType(type: SampleTypeDefinition) { const name = prompt("修改样品类型名称：", type.name)?.trim(); if (!name || name === type.name) return; if (state.sampleTypes.some((item) => item.id !== type.id && item.name.toLowerCase() === name.toLowerCase())) return alert("样品类型已存在"); const next = structuredClone(state); next.sampleTypes.find((item) => item.id === type.id)!.name = name; next.samples.filter((sample) => sample.type === type.name).forEach((sample) => { sample.type = name; }); setState(next); }
   function recolorType(type: SampleTypeDefinition, color: string) { const next = structuredClone(state); next.sampleTypes.find((item) => item.id === type.id)!.color = color; setState(next); }
   function removeType(type: SampleTypeDefinition) { if (state.samples.some((sample) => sample.type === type.name)) return alert("该类型正在被样品使用，不能删除"); if (state.sampleTypes.length === 1) return alert("至少保留一个样品类型"); if (!confirm(`确认删除样品类型“${type.name}”？`)) return; const next = structuredClone(state); next.sampleTypes = next.sampleTypes.filter((item) => item.id !== type.id); setState(next); }
-  return <div className="settings-grid"><section className="panel"><div className="panel-heading"><div><h2>存储结构</h2><p>新增结构会自动生成可编辑编号名称。</p></div></div><div className="settings-actions"><button className="button secondary" onClick={addFreezer}><Plus /> 新建冰箱</button><button className="button secondary" onClick={addRack}><Plus /> 新建层架</button><button className="button primary" onClick={addBox}><Plus /> 新建冻存盒</button></div><ul className="simple-list"><li>冰箱 <strong>{state.freezers.length}</strong></li><li>层架 <strong>{state.racks.length}</strong></li><li>冻存盒 <strong>{state.boxes.filter((b) => !b.deletedAt).length}</strong></li></ul></section><section className="panel"><div className="panel-heading"><div><h2>样品类型</h2><p>类型颜色会统一应用到对应单元格。</p></div><button className="button secondary" onClick={addType}><Plus /> 添加</button></div><div className="sample-type-list">{state.sampleTypes.map((type) => <div key={type.id}><input type="color" value={type.color} onChange={(event) => recolorType(type, event.target.value)} aria-label={`修改${type.name}颜色`} /><strong>{type.name}</strong><button className="button secondary" onClick={() => renameType(type)}>修改名称</button><button className="button danger-ghost" onClick={() => removeType(type)}>删除</button></div>)}</div></section><section className="panel"><div className="panel-heading"><div><h2>自定义字段</h2><p>字段会出现在所有样本录入表单中。</p></div><button className="button secondary" onClick={addField}><Plus /> 添加</button></div>{state.customFields.length ? <ul className="simple-list">{state.customFields.map((f) => <li key={f.id}>{f.name}<span>{f.required ? "必填" : "选填"}</span></li>)}</ul> : <EmptyState title="暂无自定义字段" text="标准字段已可直接使用。" />}</section><section className="panel"><div className="panel-heading"><div><h2>备份、迁移与账号</h2><p>JSON 包含全部库存、位置和样品更新记录。</p></div></div><div className="settings-actions"><button className="button secondary" onClick={exportJson}><Download /> 完整 JSON</button><button className="button secondary" onClick={exportCsv}><Download /> 样本 CSV</button>{importLegacyBrowserData && <button className="button secondary" onClick={importLegacyBrowserData}><Upload /> 导入旧本地数据</button>}{changeLoginPassword && <button className="button secondary" onClick={changeLoginPassword}>修改登录密码</button>}</div><div className="warning-note">{importLegacyBrowserData ? "旧数据导入会替换当前账号的云端库存，但不会删除浏览器中的原本地数据。" : "请定期导出完整 JSON 备份。"}</div></section></div>;
+  return <div className="settings-grid"><section className="panel"><div className="panel-heading"><div><h2>存储结构</h2><p>新增结构会自动生成可编辑编号名称。</p></div></div><div className="settings-actions"><button className="button secondary" onClick={addFreezer}><Plus /> 新建冰箱</button><button className="button secondary" onClick={addRack}><Plus /> 新建层架</button><button className="button primary" onClick={addBox}><Plus /> 新建冻存盒</button></div><ul className="simple-list"><li>冰箱 <strong>{state.freezers.length}</strong></li><li>层架 <strong>{state.racks.length}</strong></li><li>冻存盒 <strong>{state.boxes.filter((b) => !b.deletedAt).length}</strong></li></ul></section><section className="panel"><div className="panel-heading"><div><h2>样品类型</h2><p>类型颜色会统一应用到对应单元格。</p></div><button className="button secondary" onClick={addType}><Plus /> 添加</button></div><div className="sample-type-list">{state.sampleTypes.map((type) => <div key={type.id}><input type="color" value={type.color} onChange={(event) => recolorType(type, event.target.value)} aria-label={`修改${type.name}颜色`} /><strong>{type.name}</strong><button className="button secondary" onClick={() => renameType(type)}>修改名称</button><button className="button danger-ghost" onClick={() => removeType(type)}>删除</button></div>)}</div></section><section className="panel"><div className="panel-heading"><div><h2>自定义字段</h2><p>字段会出现在所有样本录入表单中。</p></div><button className="button secondary" onClick={addField}><Plus /> 添加</button></div>{state.customFields.length ? <ul className="simple-list">{state.customFields.map((f) => <li key={f.id}>{f.name}<span>{f.required ? "必填" : "选填"}</span></li>)}</ul> : <EmptyState title="暂无自定义字段" text="标准字段已可直接使用。" />}</section><section className="panel"><div className="panel-heading"><div><h2>备份、迁移与账号</h2><p>JSON 包含全部库存、位置和样品更新记录。</p></div></div><div className="settings-actions"><button className="button secondary" onClick={exportJson}><Download /> 完整 JSON</button><button className="button secondary" onClick={exportCsv}><Download /> 样本 CSV</button><input ref={jsonInput} hidden type="file" accept="application/json,.json" onChange={(event) => { const file = event.target.files?.[0]; if (file) importJson(file); event.currentTarget.value = ""; }} /><button className="button secondary" onClick={() => jsonInput.current?.click()}><Upload /> 导入 JSON</button>{importLegacyBrowserData && <button className="button secondary" onClick={importLegacyBrowserData}><Upload /> 导入旧本地数据</button>}{changeLoginPassword && <button className="button secondary" onClick={changeLoginPassword}>修改登录密码</button>}</div><div className="warning-note">{importLegacyBrowserData ? "旧数据导入会替换当前账号的云端库存，但不会删除浏览器中的原本地数据。" : "请定期导出完整 JSON 备份。"}</div></section></div>;
 }
 
 function StorageManager({ state, setState, selectedBoxId, setSelectedBoxId, onClose }: { state: InventoryState; setState: (state: InventoryState) => void; selectedBoxId: string; setSelectedBoxId: (id: string) => void; onClose: () => void }) {
