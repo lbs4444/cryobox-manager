@@ -8,6 +8,10 @@ const SESSION_COOKIE = "cryobox_session";
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 14;
 const rateState = new Map<string, { count: number; resetAt: number; blockedUntil: number }>();
 
+function secureCookies() {
+  return process.env.FORCE_SECURE_COOKIES === "true";
+}
+
 export interface AuthUser { id: string; email: string; }
 
 function base64url(value: string | Uint8Array) {
@@ -90,7 +94,7 @@ export async function setSession(user: AuthUser) {
   jar.set(SESSION_COOKIE, createToken(user), {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    secure: secureCookies(),
     maxAge: SESSION_TTL_SECONDS,
     path: "/",
   });
@@ -98,7 +102,7 @@ export async function setSession(user: AuthUser) {
 
 export async function clearSession() {
   const jar = await cookies();
-  jar.set(SESSION_COOKIE, "", { httpOnly: true, sameSite: "lax", secure: process.env.NODE_ENV === "production", maxAge: 0, path: "/" });
+  jar.set(SESSION_COOKIE, "", { httpOnly: true, sameSite: "lax", secure: secureCookies(), maxAge: 0, path: "/" });
 }
 
 export async function requestClientAddress() {

@@ -29,6 +29,7 @@ services:
       DATABASE_POOL_MAX: ${DATABASE_POOL_MAX:-8}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET is required}
       REGISTRATION_ENABLED: ${REGISTRATION_ENABLED:-true}
+      FORCE_SECURE_COOKIES: ${FORCE_SECURE_COOKIES:-false}
     depends_on:
       db:
         condition: service_healthy
