@@ -79,10 +79,12 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
   const [serverVersion, setServerVersion] = useState<number | null>(null);
   const [loadAttempt, setLoadAttempt] = useState(0);
   const loaded = useRef(false);
+  const serverVersionRef = useRef<number | null>(null);
 
   useEffect(() => {
     loaded.current = false;
     setState(null);
+    serverVersionRef.current = null;
     setServerVersion(null);
     setError("");
     async function initialize() {
@@ -90,7 +92,10 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
         const stored = mode === "demo" ? localStorage.getItem("cryobox-demo-v1") : null;
         const hosted = mode === "self-hosted" ? await loadSelfHostedState() : null;
         const next = mode === "cloud" ? await loadCloudState() : hosted?.state ?? (stored ? JSON.parse(stored) : structuredClone(demoState));
-        if (hosted) setServerVersion(hosted.version);
+        if (hosted) {
+          serverVersionRef.current = hosted.version;
+          setServerVersion(hosted.version);
+        }
         const resolved = normalizeState(next && Array.isArray(next.boxes) ? next : structuredClone(demoState));
         setState(resolved);
         setSelectedBoxId(resolved.boxes.find((box: Box) => !box.deletedAt)?.id ?? "");
@@ -106,15 +111,17 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
   }, [mode, loadAttempt]);
 
   useEffect(() => {
-    if (!state || !loaded.current || (mode === "self-hosted" && serverVersion == null)) return;
+    if (!state || !loaded.current || (mode === "self-hosted" && serverVersionRef.current == null)) return;
     const timer = window.setTimeout(async () => {
       try {
         setSyncing(true);
         if (mode === "demo") localStorage.setItem("cryobox-demo-v1", JSON.stringify(state));
         else if (mode === "cloud") await saveCloudState(state);
         else {
-          if (serverVersion == null) return;
-          const saved = await saveSelfHostedState(state, serverVersion);
+          const version = serverVersionRef.current;
+          if (version == null) return;
+          const saved = await saveSelfHostedState(state, version);
+          serverVersionRef.current = saved.version;
           setServerVersion(saved.version);
         }
       } catch (cause) {
@@ -122,7 +129,7 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
       } finally { setSyncing(false); }
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [state, mode, serverVersion]);
+  }, [state, mode]);
 
   const selectedBox = state?.boxes.find((box) => box.id === selectedBoxId && !box.deletedAt);
   const activeSamples = state?.samples.filter((sample) => !sample.deletedAt && sample.status !== "deleted") ?? [];
