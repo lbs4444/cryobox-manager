@@ -9,7 +9,7 @@ import {
   Snowflake, Trash2, Upload, X,
 } from "lucide-react";
 import { demoState } from "@/lib/demo-data";
-import { coordinate, parseCoordinate, rowLabel, sampleSchema, uid, validatePlacement, validateUniqueCode } from "@/lib/domain";
+import { coordinate, parseCoordinate, randomUuid, rowLabel, sampleSchema, uid, validatePlacement, validateUniqueCode } from "@/lib/domain";
 import { loadCloudState, saveCloudState } from "@/lib/cloud";
 import { loadSelfHostedState, saveSelfHostedState } from "@/lib/self-hosted";
 import type { AuditEvent, Box, InventoryState, Sample, SampleTypeDefinition } from "@/lib/types";
@@ -263,7 +263,7 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
     } else {
       parsedPositions.forEach((item) => {
         const sampleId = uid("sample");
-        const code = `CRYO-${crypto.randomUUID()}`;
+        const code = `CRYO-${randomUuid()}`;
         next.samples.push({ id: sampleId, ...parsed.data, code, customValues: { ...draft.customValues }, status: "stored", createdAt: now, updatedAt: now });
         next.locations.push({ id: uid("loc"), sampleId, boxId: box.id, row: item!.row, column: item!.column, active: true, storedAt: now });
         addAudit(next, { action: "create", entityType: "sample", entityId: sampleId, summary: `${draft.name} 入库`, metadata: { sampleName: draft.name, sampleType: draft.type, boxId: box.id, row: item!.row, column: item!.column } });
@@ -347,7 +347,7 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
       const type = (row["样品类型"] ?? "").trim();
       const frozenAt = (row["时间"] ?? "").trim();
       const dishSize = (row["复苏皿规格"] ?? "").trim();
-      const code = `CRYO-${crypto.randomUUID()}`;
+      const code = `CRYO-${randomUuid()}`;
       if (!pos || !name || !type || !frozenAt || Number.isNaN(Date.parse(frozenAt))) { errors.push(`第 ${index + 2} 行：名称、类型、时间或孔位无效`); return; }
       if (!next.sampleTypes.some((item) => item.name === type)) { errors.push(`第 ${index + 2} 行：样品类型“${type}”尚未在系统设置中创建`); return; }
       const placementError = validatePlacement(next, selectedBox, pos.row, pos.column);

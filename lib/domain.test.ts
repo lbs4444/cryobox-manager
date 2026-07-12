@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { coordinate, parseCoordinate, rowLabel, sampleSchema, validatePlacement, validateUniqueCode } from "./domain";
+import { coordinate, parseCoordinate, randomUuid, rowLabel, sampleSchema, uid, validatePlacement, validateUniqueCode } from "./domain";
 import { demoState } from "./demo-data";
 
 describe("坐标转换", () => {
@@ -48,5 +48,23 @@ describe("库存校验", () => {
   it("非细胞样品允许复苏皿留空", () => {
     const result = sampleSchema.safeParse({ code: "INTERNAL", name: "组织1", type: "其他", source: "", collectedAt: "", frozenAt: "2026-07-02", dishSize: "", quantity: 1, unit: "管", project: "", notes: "" });
     expect(result.success).toBe(true);
+  });
+});
+
+describe("ID 生成", () => {
+  it("在 HTTP 页面缺少 randomUUID 时使用 getRandomValues", () => {
+    const fallbackCrypto = {
+      getRandomValues<T extends ArrayBufferView | null>(array: T) {
+        const bytes = array as Uint8Array;
+        bytes.forEach((_, index) => { bytes[index] = index; });
+        return array;
+      },
+    };
+
+    expect(randomUuid(fallbackCrypto)).toBe("00010203-0405-4607-8809-0a0b0c0d0e0f");
+  });
+
+  it("所有业务 ID 都通过兼容生成器创建", () => {
+    expect(uid("sample")).toMatch(/^sample_[0-9a-f-]{36}$/);
   });
 });
