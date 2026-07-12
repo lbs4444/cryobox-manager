@@ -3,6 +3,8 @@ set -euo pipefail
 
 backup_dir="${CRYOBOX_BACKUP_DIR:-/var/backups/cryobox}"
 retention_days="${CRYOBOX_BACKUP_RETENTION_DAYS:-30}"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "$script_dir/.."
 mkdir -p "$backup_dir"
 timestamp="$(date -u +%Y%m%dT%H%M%SZ)"
 file="$backup_dir/cryobox-$timestamp.sql.gz"
