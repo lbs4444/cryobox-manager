@@ -77,9 +77,14 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
   const [importRows, setImportRows] = useState<Record<string, string>[] | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [serverVersion, setServerVersion] = useState<number | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const loaded = useRef(false);
 
   useEffect(() => {
+    loaded.current = false;
+    setState(null);
+    setServerVersion(null);
+    setError("");
     async function initialize() {
       try {
         const stored = mode === "demo" ? localStorage.getItem("cryobox-demo-v1") : null;
@@ -91,21 +96,24 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
         setSelectedBoxId(resolved.boxes.find((box: Box) => !box.deletedAt)?.id ?? "");
       } catch (cause) {
         setError(`数据载入失败：${cause instanceof Error ? cause.message : "未知错误"}`);
-        setState(normalizeState(structuredClone(demoState)));
-        setSelectedBoxId("box_1");
+        if (mode !== "self-hosted") {
+          setState(normalizeState(structuredClone(demoState)));
+          setSelectedBoxId("box_1");
+        }
       } finally { loaded.current = true; }
     }
     initialize();
-  }, [mode]);
+  }, [mode, loadAttempt]);
 
   useEffect(() => {
-    if (!state || !loaded.current) return;
+    if (!state || !loaded.current || (mode === "self-hosted" && serverVersion == null)) return;
     const timer = window.setTimeout(async () => {
       try {
         setSyncing(true);
         if (mode === "demo") localStorage.setItem("cryobox-demo-v1", JSON.stringify(state));
         else if (mode === "cloud") await saveCloudState(state);
-        else if (serverVersion != null) {
+        else {
+          if (serverVersion == null) return;
           const saved = await saveSelfHostedState(state, serverVersion);
           setServerVersion(saved.version);
         }
@@ -114,7 +122,7 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
       } finally { setSyncing(false); }
     }, 350);
     return () => window.clearTimeout(timer);
-  }, [state, mode]);
+  }, [state, mode, serverVersion]);
 
   const selectedBox = state?.boxes.find((box) => box.id === selectedBoxId && !box.deletedAt);
   const activeSamples = state?.samples.filter((sample) => !sample.deletedAt && sample.status !== "deleted") ?? [];
@@ -131,7 +139,7 @@ export function InventoryApp({ mode, userEmail, onSignOut, onChangePassword }: {
     });
   }, [state, activeSamples, query]);
 
-  if (!state) return <main className="center-screen"><Snowflake className="spin" /> 正在载入库存…</main>;
+  if (!state) return <main className="center-screen"><div className="load-state"><Snowflake className={error ? "" : "spin"} /><strong>{error ? "库存载入失败" : "正在载入库存…"}</strong>{error && <><p>{error}</p><button className="button primary" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>重新加载</button></>}</div></main>;
 
   function addAudit(next: InventoryState, event: Omit<AuditEvent, "id" | "createdAt">) {
     next.auditEvents.unshift({ ...event, id: uid("audit"), createdAt: new Date().toISOString() });
